@@ -3,7 +3,7 @@
 # ------------------------------------
 # OpenFL Base Image
 # ------------------------------------
-FROM ubuntu:22.04 as base
+FROM ubuntu:24.04 as base
 
 # Configure network proxy, if required, in ~/.docker/config.json
 ENV DEBIAN_FRONTEND=noninteractive
