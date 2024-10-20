@@ -27,6 +27,8 @@ RUN groupadd -g 1001 default && \
     useradd -m -u 1001 -g default openfl
 USER openfl
 
+RUN mkdir -p /home/openfl/workspace
+VOLUME ["/home/openfl/workspace"]
 # Install OpenFL.
 WORKDIR /home/openfl
 COPY --chown=openfl:default . .
