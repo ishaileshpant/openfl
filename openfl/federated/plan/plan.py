@@ -543,6 +543,7 @@ class Plan:
         task_runner=None,
         client=None,
         shard_descriptor=None,
+         mode="default",
     ):
         """Get collaborator.
 
@@ -564,6 +565,7 @@ class Plan:
                 to None.
             shard_descriptor (ShardDescriptor, optional): Descriptor of the
                 data shard. Defaults to None.
+            mode (str, optional): Mode for the collaborator. Defaults to "default".
 
         Returns:
             self.collaborator_ (Collaborator): The collaborator instance.
@@ -576,6 +578,7 @@ class Plan:
         defaults[SETTINGS]["collaborator_name"] = collaborator_name
         defaults[SETTINGS]["aggregator_uuid"] = self.aggregator_uuid
         defaults[SETTINGS]["federation_uuid"] = self.federation_uuid
+        defaults[SETTINGS]["mode"] = mode
 
         if task_runner is not None:
             defaults[SETTINGS]["task_runner"] = task_runner

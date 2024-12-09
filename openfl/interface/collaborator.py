@@ -64,7 +64,14 @@ def collaborator(context):
     required=True,
     help="The certified common name of the collaborator",
 )
-def start_(plan, collaborator_name, data_config):
+@option(
+    "-m",
+    "--mode",
+    required=False,
+    default="default",
+    help="The mode in which the collaborator is joining the federation",
+)
+def start_(plan, collaborator_name, data_config, mode):
     """Start a collaborator service."""
 
     if plan and is_directory_traversal(plan):
@@ -84,7 +91,7 @@ def start_(plan, collaborator_name, data_config):
     echo(f"Data = {plan.cols_data_paths}")
     logger.info("🧿 Starting a Collaborator Service.")
 
-    plan.get_collaborator(collaborator_name).run()
+    plan.get_collaborator(collaborator_name, mode=mode).run()
 
 
 @collaborator.command(name="create")

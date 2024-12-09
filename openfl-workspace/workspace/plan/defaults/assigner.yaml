@@ -1,4 +1,4 @@
-template : openfl.component.RandomGroupedAssigner
+template : openfl.component.assigner.mode_based_assigner.ModeBasedAssigner
 settings :
   task_groups  :
     - name       : train_and_validate
@@ -7,3 +7,7 @@ settings :
         - aggregated_model_validation
         - train
         - locally_tuned_model_validation
+    - name       : evaluate
+      percentage : 1.0
+      tasks      :
+        - aggregated_model_validation

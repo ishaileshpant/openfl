@@ -28,6 +28,7 @@ network :
 
 assigner :
   defaults : plan/defaults/assigner.yaml
+  template : openfl.component.assigner.mode_based_assigner.ModeBasedAssigner
 
 tasks :
   defaults : plan/defaults/tasks_fast_estimator.yaml

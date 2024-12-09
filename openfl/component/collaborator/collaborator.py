@@ -63,6 +63,7 @@ class Collaborator:
         db_store_rounds (int): The number of rounds to store in the database.
         single_col_cert_common_name (str): The common name for the single
             column certificate.
+        mode (str): The mode of the collaborator, which can be "train", "default", or "validate".
 
     .. note::
         \* - Plan setting.
@@ -82,6 +83,7 @@ class Collaborator:
         compression_pipeline=None,
         db_store_rounds=1,
         log_memory_usage=False,
+        mode="default",
     ):
         """Initialize the Collaborator object.
 
@@ -103,6 +105,7 @@ class Collaborator:
                 Defaults to None.
             db_store_rounds (int, optional): The number of rounds to store in
                 the database. Defaults to 1.
+            mode (str, optional): The mode of the collaborator. Defaults to "default".
         """
         self.single_col_cert_common_name = None
 
@@ -147,6 +150,7 @@ class Collaborator:
             )
 
         self.task_runner.set_optimizer_treatment(self.opt_treatment.name)
+        self.mode = mode
 
     def set_available_devices(self, cuda: Tuple[str] = ()):
         """Set available CUDA devices.
