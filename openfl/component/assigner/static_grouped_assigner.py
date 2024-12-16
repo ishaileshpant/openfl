@@ -4,7 +4,7 @@
 
 """Static grouped assigner module."""
 
-from openfl.component.assigner.assigner import Assigner
+from openfl.component.assigner.assigner import Assigner, mode_based_filtering
 
 
 class StaticGroupedAssigner(Assigner):
@@ -42,6 +42,7 @@ class StaticGroupedAssigner(Assigner):
         self.task_groups = task_groups
         super().__init__(**kwargs)
 
+    @mode_based_filtering
     def define_task_assignments(self):
         """Define task assignments for each round and collaborator.
 

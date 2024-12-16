@@ -4,6 +4,38 @@
 
 """Assigner module."""
 
+from functools import wraps
+
+pass
+
+
+def mode_based_filtering(func):
+    """Decorator to filter task groups based on mode.
+
+    This decorator should be applied to define_task_assignments() method
+    in Assigner subclasses to handle mode-based filtering.
+    """
+
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        # Filter task groups based on mode before assignment
+        if hasattr(self, "mode"):
+            self.task_groups = [
+                group for group in self.task_groups if group["name"].startswith(self.mode)
+            ]
+
+            if not self.task_groups:
+                raise ValueError(f"No task groups found for mode: {self.mode}")
+
+            # Mode-specific validations
+            if self.mode == "evaluate":
+                assert self.rounds == 1, "Number of rounds should be 1 for evaluate mode"
+
+        # Call the original method
+        return func(self, *args, **kwargs)
+
+    return wrapper
+
 
 class Assigner:
     r"""
@@ -35,18 +67,22 @@ class Assigner:
         \* - ``tasks`` argument is taken from ``tasks`` section of FL plan YAML file.
     """
 
-    def __init__(self, tasks, authorized_cols, rounds_to_train, **kwargs):
+    def __init__(
+        self, tasks, authorized_cols, rounds_to_train, mode: str = "train_and_validate", **kwargs
+    ):
         """Initializes the Assigner.
 
         Args:
             tasks (list of object): List of tasks to assign.
             authorized_cols (list of str): Collaborators.
             rounds_to_train (int): Number of training rounds.
+            mode (str, optional): Federation mode for filtering tasks. Defaults to "train_and_validate".
             **kwargs: Additional keyword arguments.
         """
         self.tasks = tasks
         self.authorized_cols = authorized_cols
         self.rounds = rounds_to_train
+        self.mode = mode
         self.all_tasks_in_groups = []
 
         self.task_group_collaborators = {}

@@ -6,7 +6,7 @@
 
 import numpy as np
 
-from openfl.component.assigner.assigner import Assigner
+from openfl.component.assigner.assigner import Assigner, mode_based_filtering
 
 
 class RandomGroupedAssigner(Assigner):
@@ -38,11 +38,12 @@ class RandomGroupedAssigner(Assigner):
 
         Args:
             task_groups (list of object): Task groups to assign.
-            **kwargs: Additional keyword arguments.
+            **kwargs: Additional keyword arguments, including mode.
         """
         self.task_groups = task_groups
         super().__init__(**kwargs)
 
+    @mode_based_filtering
     def define_task_assignments(self):
         """Define task assignments for each round and collaborator.
 
