@@ -165,37 +165,40 @@ def initialize(
     )
 
     init_state_path = plan.config["aggregator"]["settings"]["init_state_path"]
+    
+    if isfile(init_state_path):
+        logger.info(f"File {init_state_path} already exists. Skipping initialization of random weights.")
+    else:
+        # This is needed to bypass data being locally available
+        if input_shape is not None:
+            logger.info(
+                "Attempting to generate initial model weights with" f" custom input shape {input_shape}"
+            )
 
-    # This is needed to bypass data being locally available
-    if input_shape is not None:
-        logger.info(
-            "Attempting to generate initial model weights with" f" custom input shape {input_shape}"
+        data_loader = get_dataloader(plan, prefer_minimal=True, input_shape=input_shape)
+
+        task_runner = plan.get_task_runner(data_loader)
+        tensor_pipe = plan.get_tensor_pipe()
+
+        tensor_dict, holdout_params = split_tensor_dict_for_holdouts(
+            logger,
+            task_runner.get_tensor_dict(False),
+            **task_runner.tensor_dict_split_fn_kwargs,
         )
 
-    data_loader = get_dataloader(plan, prefer_minimal=True, input_shape=input_shape)
+        logger.warning(
+            f"Following parameters omitted from global initial model, "
+            f"local initialization will determine"
+            f" values: {list(holdout_params.keys())}"
+        )
 
-    task_runner = plan.get_task_runner(data_loader)
-    tensor_pipe = plan.get_tensor_pipe()
+        model_snap = utils.construct_model_proto(
+            tensor_dict=tensor_dict, round_number=0, tensor_pipe=tensor_pipe
+        )
 
-    tensor_dict, holdout_params = split_tensor_dict_for_holdouts(
-        logger,
-        task_runner.get_tensor_dict(False),
-        **task_runner.tensor_dict_split_fn_kwargs,
-    )
+        logger.info("Creating Initial Weights File    🠆 %s", init_state_path)
 
-    logger.warning(
-        f"Following parameters omitted from global initial model, "
-        f"local initialization will determine"
-        f" values: {list(holdout_params.keys())}"
-    )
-
-    model_snap = utils.construct_model_proto(
-        tensor_dict=tensor_dict, round_number=0, tensor_pipe=tensor_pipe
-    )
-
-    logger.info("Creating Initial Weights File    🠆 %s", init_state_path)
-
-    utils.dump_proto(model_proto=model_snap, fpath=init_state_path)
+        utils.dump_proto(model_proto=model_snap, fpath=init_state_path)
 
     plan_origin = Plan.parse(
         plan_config_path=plan_config,
