@@ -485,7 +485,7 @@ class Collaborator:
         """
         tensor_name, origin, round_number, report, tags = tensor_key
 
-        logger.debug("Requesting aggregated tensor %s", tensor_key)
+        logger.info("Requesting aggregated tensor %s", tensor_key)
         tensor = self.client.get_aggregated_tensor(
             self.collaborator_name,
             tensor_name,
@@ -606,14 +606,13 @@ class Collaborator:
         """Convert named tensor to a numpy array.
 
         Args:
-            named_tensor (protobuf): The tensor to convert to nparray.
+            named_tensor (dict or protobuf): The tensor data, either as JSON dict or protobuf.
 
         Returns:
             decompressed_nparray (nparray): The nparray converted.
         """
         # do the stuff we do now for decompression and frombuffer and stuff
-        # This should probably be moved back to protoutils
-        raw_bytes = named_tensor.data_bytes
+
         metadata = [
             {
                 "int_to_float": proto.int_to_float,
@@ -622,15 +621,22 @@ class Collaborator:
             }
             for proto in named_tensor.transformer_metadata
         ]
+        tensor_name = named_tensor.name
+        round_number = named_tensor.round_number
+        report = named_tensor.report
+        tags = tuple(named_tensor.tags)
+        raw_bytes = named_tensor.data_bytes
+
         # The tensor has already been transfered to collaborator, so
         # the newly constructed tensor should have the collaborator origin
         tensor_key = TensorKey(
-            named_tensor.name,
+            tensor_name,
             self.collaborator_name,
-            named_tensor.round_number,
-            named_tensor.report,
-            tuple(named_tensor.tags),
+            round_number,
+            report,
+            tags,
         )
+
         *_, tags = tensor_key
         if "compressed" in tags:
             decompressed_tensor_key, decompressed_nparray = self.tensor_codec.decompress(

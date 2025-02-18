@@ -2,16 +2,24 @@
 // Licensed subject to the terms of the separately executed evaluation license agreement between Intel Corporation and you.
 
 syntax = "proto3";
+option go_package = "github.com/securefederatedai/openfl/openfl/protocols";
 
 package openfl.aggregator;
 
 import "openfl/protocols/base.proto";
+import "google/api/annotations.proto";
 
 
 service Aggregator {
   rpc GetTasks(GetTasksRequest) returns (GetTasksResponse) {}
   rpc GetAggregatedTensor(GetAggregatedTensorRequest) returns (GetAggregatedTensorResponse) {}
-  rpc SendLocalTaskResults(stream DataStream) returns (SendLocalTaskResultsResponse) {}
+  rpc SendLocalTaskResults(stream DataStream) returns (SendLocalTaskResultsResponse) {
+    option (google.api.http) = {
+      post: "/openfl.aggregator.Aggregator/SendLocalTaskResults"
+      body: "*"
+      response_body: "*"
+    };
+  }
   rpc GetMetricStream(GetMetricStreamRequest) returns (stream GetMetricStreamResponse) {}
   rpc GetTrainedModel(GetTrainedModelRequest) returns (TrainedModelResponse) {}
   rpc GetExperimentDescription(GetExperimentDescriptionRequest)

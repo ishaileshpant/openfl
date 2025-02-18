@@ -3,3 +3,4 @@
 
 
 from openfl.transport.grpc import AggregatorGRPCClient, AggregatorGRPCServer
+from openfl.transport.rest import AggregatorRESTClient

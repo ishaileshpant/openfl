@@ -110,7 +110,14 @@ class AggregatorGRPCServer(aggregator_pb2_grpc.AggregatorServicer):
         check_is_in(request.header.sender, self.aggregator.authorized_cols, self.logger)
 
         # check that the message is for me
-        check_equal(request.header.receiver, self.aggregator.uuid, self.logger)
+        try:
+            check_equal(request.header.receiver, self.aggregator.uuid, self.logger)
+        except ValueError:
+            self.logger.error(
+                f"UUID mismatch - Received: {request.header.receiver}, "
+                f"Expected: {self.aggregator.uuid}"
+            )
+            raise
 
         # check that the message is for my federation
         check_equal(

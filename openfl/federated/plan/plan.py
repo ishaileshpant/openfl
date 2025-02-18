@@ -522,8 +522,6 @@ class Plan:
         else:
             defaults[SETTINGS]["client"] = self.get_client(
                 collaborator_name,
-                self.aggregator_uuid,
-                self.federation_uuid,
                 root_certificate,
                 private_key,
                 certificate,
@@ -537,8 +535,6 @@ class Plan:
     def get_client(
         self,
         collaborator_name,
-        aggregator_uuid,
-        federation_uuid,
         root_certificate=None,
         private_key=None,
         certificate=None,
@@ -559,6 +555,25 @@ class Plan:
         Returns:
             AggregatorGRPCClient: gRPC client for the specified collaborator.
         """
+        client_args = self.get_client_args(
+            collaborator_name,
+            root_certificate,
+            private_key,
+            certificate,
+        )
+
+        if self.client_ is None:
+            self.client_ = AggregatorGRPCClient(**client_args)
+
+        return self.client_
+
+    def get_client_args(
+        self,
+        collaborator_name,
+        root_certificate=None,
+        private_key=None,
+        certificate=None,
+    ):
         common_name = collaborator_name
         if not root_certificate or not private_key or not certificate:
             root_certificate = "cert/cert_chain.crt"
@@ -573,13 +588,9 @@ class Plan:
         client_args["certificate"] = certificate
         client_args["private_key"] = private_key
 
-        client_args["aggregator_uuid"] = aggregator_uuid
-        client_args["federation_uuid"] = federation_uuid
-
-        if self.client_ is None:
-            self.client_ = AggregatorGRPCClient(**client_args)
-
-        return self.client_
+        client_args["aggregator_uuid"] = self.aggregator_uuid
+        client_args["federation_uuid"] = self.federation_uuid
+        return client_args
 
     def get_server(
         self,
@@ -602,6 +613,16 @@ class Plan:
         Returns:
             AggregatorGRPCServer: gRPC server of the aggregator instance.
         """
+        server_args = self.get_server_args(root_certificate, private_key, certificate, kwargs)
+
+        server_args["aggregator"] = self.get_aggregator()
+
+        if self.server_ is None:
+            self.server_ = AggregatorGRPCServer(**server_args)
+
+        return self.server_
+
+    def get_server_args(self, root_certificate, private_key, certificate, kwargs):
         common_name = self.config["network"][SETTINGS]["agg_addr"].lower()
 
         if not root_certificate or not private_key or not certificate:
@@ -617,13 +638,7 @@ class Plan:
         server_args["root_certificate"] = root_certificate
         server_args["certificate"] = certificate
         server_args["private_key"] = private_key
-
-        server_args["aggregator"] = self.get_aggregator()
-
-        if self.server_ is None:
-            self.server_ = AggregatorGRPCServer(**server_args)
-
-        return self.server_
+        return server_args
 
     def save_model_to_state_file(self, tensor_dict, round_number, output_path):
         """Save model weights to a protobuf state file.

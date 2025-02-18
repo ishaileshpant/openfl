@@ -14,6 +14,7 @@ from pathlib import Path
 from shutil import copy, copytree, ignore_patterns, make_archive, unpack_archive
 from tempfile import mkdtemp
 
+from click import Choice as ClickChoice
 from click import Path as ClickPath
 from click import confirm, echo, group, option, pass_context, prompt, style
 from yaml import FullLoader, dump, load
@@ -61,7 +62,14 @@ def collaborator(context):
     required=True,
     help="The certified common name of the collaborator.",
 )
-def start_(plan, collaborator_name, data_config):
+@option(
+    "-c",
+    "--client_protocol",
+    help="The client protocol to use for communication with the aggregator.",
+    default="grpc",
+    type=ClickChoice(["grpc", "rest"]),
+)
+def start_(plan, collaborator_name, data_config, client_protocol):
     """Starts a collaborator service."""
 
     if plan and is_directory_traversal(plan):
@@ -80,8 +88,15 @@ def start_(plan, collaborator_name, data_config):
 
     echo(f"Data = {plan.cols_data_paths}")
     logger.info("🧿 Starting a Collaborator Service.")
+    collaborator = plan.get_collaborator(collaborator_name)
+    # Determine if additional client protocol needs to be created
+    if client_protocol == "rest":
+        from openfl.transport.rest.aggregator_client import AggregatorRESTClient
 
-    plan.get_collaborator(collaborator_name).run()
+        client_args = plan.get_client_args(collaborator_name=collaborator_name)
+        aggregator_client = AggregatorRESTClient(**client_args)
+        collaborator.client = aggregator_client
+    collaborator.run()
 
 
 @collaborator.command(name="create")
