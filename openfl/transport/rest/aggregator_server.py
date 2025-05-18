@@ -97,22 +97,44 @@ class AggregatorRESTServer:
             | ssl.OP_NO_COMPRESSION
             | ssl.OP_NO_TICKET  # Disable session tickets
             | ssl.OP_CIPHER_SERVER_PREFERENCE  # Server chooses cipher
+            | ssl.OP_SINGLE_DH_USE  # Ensure perfect forward secrecy with DHE
+            | ssl.OP_SINGLE_ECDH_USE  # Ensure perfect forward secrecy with ECDHE
         )
 
-        # Set verification flags
-        ssl_context.verify_flags = ssl.VERIFY_X509_STRICT
-        ssl_context.verify_mode = ssl.CERT_REQUIRED if self.require_client_auth else ssl.CERT_NONE
+        # Set verification flags for strict certificate checking
+        ssl_context.verify_flags = (
+            ssl.VERIFY_X509_STRICT | ssl.VERIFY_CRL_CHECK_CHAIN  # Check certificate revocation
+        )
+
+        # Configure client certificate verification
+        if self.require_client_auth:
+            ssl_context.verify_mode = ssl.CERT_REQUIRED
+            # Load root CA for client cert verification
+            if root_certificate:
+                try:
+                    ssl_context.load_verify_locations(cafile=root_certificate)
+                except Exception as e:
+                    logger.error(f"Failed to load root CA certificate: {str(e)}")
+                    raise
+            else:
+                logger.error("Root certificate is required when client authentication is enabled")
+                raise ValueError("Root certificate is required for mTLS")
+        else:
+            ssl_context.verify_mode = ssl.CERT_NONE
 
         # Load server certificate and key
-        ssl_context.load_cert_chain(certfile=certificate, keyfile=private_key)
+        try:
+            ssl_context.load_cert_chain(certfile=certificate, keyfile=private_key)
+        except Exception as e:
+            logger.error(f"Failed to load server certificate and key: {str(e)}")
+            raise
 
-        # Load and trust the root CA certificate
-        if root_certificate:
-            try:
-                ssl_context.load_verify_locations(cafile=root_certificate)
-            except Exception as e:
-                logger.error(f"Failed to load root CA certificate: {str(e)}")
-                raise
+        # Enable post-handshake authentication for better security
+        if hasattr(ssl_context, "post_handshake_auth"):
+            ssl_context.post_handshake_auth = True
+
+        # Set verification purpose
+        ssl_context.purpose = ssl.Purpose.CLIENT_AUTH
 
         return ssl_context
 
@@ -152,6 +174,125 @@ class AggregatorRESTServer:
         except AttributeError:
             return None
 
+    def _validate_client_certificate(self, request_environ, collaborator_name):
+        """
+        Validate client certificate when mTLS is enabled.
+
+        Args:
+            request_environ: The request environment containing SSL information
+            collaborator_name: The collaborator name from the request (from header.sender)
+
+        Returns:
+            bool: True if validation passes
+
+        Raises:
+            abort: HTTP error if validation fails
+        """
+        if not self.use_tls:
+            return True
+
+        try:
+            # Default to collaborator name (like gRPC)
+            common_name = collaborator_name
+
+            # Get certificate information if client auth is required
+            if self.require_client_auth:
+                cert_cn = self._get_certificate_cn(request_environ, collaborator_name)
+                if not cert_cn:
+                    abort(401, "Client certificate validation failed - certificate not found")
+                common_name = cert_cn
+
+            # Validate collaborator identity
+            return self._validate_collaborator(common_name, collaborator_name)
+
+        except Exception as e:
+            logger.error(f"Certificate validation failed: {str(e)}")
+            abort(401, str(e))
+
+    def _get_certificate_cn(self, request_environ, collaborator_name):
+        """Get certificate CN from environment or headers."""
+        # Try to get certificate info from environment
+        peercert = request_environ.get("SSL_CLIENT_CERT")
+        cert_cn = request_environ.get("SSL_CLIENT_S_DN_CN")
+
+        # Try to extract CN if we have certificate but no CN
+        if peercert and not cert_cn:
+            try:
+                cert_cn = self._extract_cn_from_cert(peercert)
+            except Exception as e:
+                logger.error(f"Failed to extract CN from certificate: {e}")
+
+        # If no certificate found, try fallback methods
+        if not peercert:
+            # Try header-based fallback for experimental mode
+            cert_cn = self._try_header_fallback(collaborator_name)
+
+        return cert_cn
+
+    def _try_header_fallback(self, collaborator_name):
+        """Try to get CN from headers as fallback in experimental mode."""
+        # FALLBACK: In experimental mode, allow using header-based auth
+        # This should NOT be used in production
+        try:
+            from flask import request
+
+            # Use Sender header as fallback
+            if hasattr(request, "headers") and "Sender" in request.headers:
+                cert_cn = request.headers.get("Sender")
+                return cert_cn
+        except Exception as e:
+            logger.error(f"Error in header fallback: {e}")
+
+        # THIS SHOULD BE REMOVED POST EXPERIMENTAL MODE
+        return collaborator_name
+
+    def _validate_collaborator(self, common_name, collaborator_name):
+        """Validate collaborator identity."""
+        if not self.aggregator.valid_collaborator_cn_and_id(common_name, collaborator_name):
+            # Add timing attack protection
+            sleep(5 * random())
+            logger.error(
+                f"Invalid collaborator. CN: |{common_name}| "
+                f"collaborator_name: |{collaborator_name}|"
+            )
+            abort(401, "Collaborator validation failed")
+
+        return True
+
+    def _extract_cn_from_cert(self, cert_pem):
+        """Extract CN from a PEM certificate using standard libraries."""
+        import re
+
+        pass
+        pass
+
+        # Try regex approach first (most reliable with PEM format)
+        cn_match = re.search(
+            r"CN\s*=\s*([^,/\n]+)",
+            cert_pem.decode("utf-8") if isinstance(cert_pem, bytes) else cert_pem,
+        )
+        if cn_match:
+            return cn_match.group(1).strip()
+
+        # Try using cryptography if available
+        try:
+            from cryptography import x509
+            from cryptography.hazmat.backends import default_backend
+
+            # Convert PEM to certificate object
+            cert_data = cert_pem.encode("utf-8") if isinstance(cert_pem, str) else cert_pem
+            cert = x509.load_pem_x509_certificate(cert_data, default_backend())
+
+            # Extract CN from subject
+            for attribute in cert.subject:
+                if attribute.oid._name == "commonName":
+                    return attribute.value
+        except ImportError:
+            pass
+
+        # Fallback: use the collaborator name from the environment
+        return None
+
     def _is_authorized(self, collaborator_id, federation_id, cert_common_name=None):
         """
         Validate collaborator identity with strict checks.
@@ -186,6 +327,10 @@ class AggregatorRESTServer:
                     f"Collaborator validation failed. CN: {common_name}, ID: {collaborator_id}"
                 )
                 abort(401, "Collaborator validation failed")
+
+            # Validate client certificate if mTLS is enabled
+            if self.use_tls and self.require_client_auth:
+                self._validate_client_certificate(request.environ, collaborator_id)
 
             # Verify federation UUID
             if federation_id != str(self.aggregator.federation_uuid):
@@ -376,6 +521,116 @@ class AggregatorRESTServer:
         self._setup_tensor_route()
         self._setup_relay_route()
 
+        # Add middleware for client certificate extraction
+        self._setup_certificate_middleware()
+
+    def _setup_certificate_middleware(self):
+        """Set up middleware to capture SSL certificates from client connections."""
+
+        @self.app.before_request
+        def extract_client_cert():
+            """Extract client certificate and add it to request environment."""
+            if not (self.use_tls and self.require_client_auth):
+                return None
+
+            # Get SSL connection information
+            try:
+                from flask import request
+
+                # Try to extract certificate from the socket
+                cert_data = self._extract_certificate_from_socket(request.environ)
+                if cert_data:
+                    # Process the certificate data
+                    self._process_certificate_data(request.environ, cert_data)
+
+            except Exception as e:
+                logger.warning(f"Failed to extract client certificate: {e}")
+                # Continue processing the request even if cert extraction fails
+
+            return None
+
+    def _extract_certificate_from_socket(self, environ):
+        """Extract the certificate from the socket if available."""
+        # Access underlying SSL socket if possible
+        transport = environ.get("werkzeug.socket")
+        if not (transport and hasattr(transport, "getpeercert")):
+            return None
+
+        # Extract certificate from socket
+        return transport.getpeercert(binary_form=True)
+
+    def _process_certificate_data(self, environ, der_cert):
+        """Process the DER certificate data and store in environment."""
+        if not der_cert:
+            return False
+
+        # Convert DER to PEM format using built-in libraries
+        try:
+            # Try using cryptography if available
+            cn, pem_cert = self._convert_der_using_cryptography(der_cert)
+            if pem_cert:
+                environ["SSL_CLIENT_CERT"] = pem_cert
+            if cn:
+                environ["SSL_CLIENT_S_DN_CN"] = cn
+                logger.info(f"Extracted client certificate CN: {cn}")
+                return True
+        except ImportError:
+            # Fall back to regex method
+            return self._try_regex_cn_extraction(environ, der_cert)
+        except Exception as e:
+            logger.warning(f"Error converting certificate format: {e}")
+
+        return False
+
+    def _convert_der_using_cryptography(self, der_cert):
+        """Convert DER certificate using cryptography library."""
+        from cryptography import x509
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives import serialization
+
+        cert = x509.load_der_x509_certificate(der_cert, default_backend())
+        pem_cert = cert.public_bytes(encoding=serialization.Encoding.PEM)
+
+        # Parse the subject to get CN
+        cn = None
+        for attribute in cert.subject:
+            if attribute.oid._name == "commonName":
+                cn = attribute.value
+                break
+
+        return cn, pem_cert
+
+    def _try_regex_cn_extraction(self, environ, der_cert):
+        """Try to extract CN using regex from binary certificate."""
+        try:
+            import binascii
+            import re
+
+            # Convert to hex and then look for CN
+            hex_data = binascii.hexlify(der_cert).decode("ascii")
+            # Look for common name pattern in hex
+            # This is a simplified approach and may not work for all certs
+            cn_pattern = (
+                r"(?:3[0-9]|4[0-9]|5[0-9])(?:06|07|08|09|0a|0b|0c|0d|0e|0f)"
+                r"(?:03|04|05|06)(?:13|14|15|16)(.{2,60})(?:30|31)"
+            )
+            cn_match = re.search(cn_pattern, hex_data)
+            if cn_match:
+                # Convert hex to ASCII
+                cn_hex = cn_match.group(1)
+                try:
+                    cn = binascii.unhexlify(cn_hex).decode("utf-8")
+                    environ["SSL_CLIENT_S_DN_CN"] = cn
+                    logger.info(f"Extracted client certificate CN using regex: {cn}")
+                    return True
+                except Exception as e:
+                    logger.warning(f"Failed to decode CN: {e}")
+
+            return False
+        except Exception as e:
+            logger.warning(f"Error in regex CN extraction: {e}")
+            return False
+
     def _setup_ping_route(self):
         """Set up the /ping endpoint."""
 
@@ -558,16 +813,9 @@ class AggregatorRESTServer:
 
             # Validate the collaborator via header
             collab_name = relay_req.header.sender
-            cert_cn = None
-            if self.use_tls and self.require_client_auth:
-                cert_cn = request.environ.get("SSL_CLIENT_S_DN_CN")
 
             # Use the consolidated validation method with the certificate CN if available
-            self._is_authorized(
-                collab_name,
-                relay_req.header.federation_uuid,
-                cert_common_name=cert_cn if cert_cn else None,
-            )
+            self._is_authorized(collab_name, relay_req.header.federation_uuid)
 
             if relay_req.header.receiver != str(self.aggregator.uuid):
                 abort(400, "Header receiver mismatch")

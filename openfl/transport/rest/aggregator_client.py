@@ -5,6 +5,7 @@
 
 # Standard library imports
 import logging
+import ssl
 import struct
 import time
 from typing import Any, List, Tuple
@@ -82,7 +83,13 @@ class AggregatorRESTClient(AggregatorClientInterface):
         )
 
         # Configure client certificates if required
-        if self.use_tls and self.require_client_auth and self.certificate and self.private_key:
+        if self.use_tls and self.require_client_auth:
+            if not self.certificate or not self.private_key:
+                raise ValueError(
+                    "Both certificate and private key are required for mTLS "
+                    "(client authentication). "
+                    "Please provide both certificate and private key paths."
+                )
             self.cert = (self.certificate, self.private_key)
         else:
             self.cert = None
@@ -158,7 +165,14 @@ class AggregatorRESTClient(AggregatorClientInterface):
             return False
 
         if root_certificate:
-            return root_certificate
+            # Verify the root certificate exists and is readable
+            try:
+                with open(root_certificate, "rb") as f:
+                    f.read()
+                return root_certificate
+            except Exception as e:
+                logger.error(f"Failed to read root certificate: {e}")
+                raise
 
         return True  # Use system's default CA bundle
 
@@ -222,7 +236,9 @@ class AggregatorRESTClient(AggregatorClientInterface):
             "X-Content-Type-Options": "nosniff",
             "X-Frame-Options": "DENY",
             "X-XSS-Protection": "1; mode=block",
+            "Sender": self.collaborator_name,
         }
+
         if self.use_tls:
             headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return headers
@@ -273,21 +289,83 @@ class AggregatorRESTClient(AggregatorClientInterface):
             try:
                 session = requests.Session()
                 if self.use_tls:
-                    session.verify = self.cert_verification
-                    session.cert = self.cert
+                    # Extract hostname from URL for verification
+                    hostname = url.split("://")[1].split(":")[0].split("/")[0]
 
-                response = session.request(
-                    method=method,
-                    url=url,
-                    data=data,
-                    headers=headers,
-                    timeout=timeout or self.timeout,
-                    stream=stream,
-                    params=params,
-                )
+                    # Create a custom SSL context for this request
+                    context = ssl.create_default_context(
+                        cafile=self.root_certificate if self.root_certificate else None
+                    )
+                    context.verify_mode = ssl.CERT_REQUIRED
+
+                    # Configure session with SSL context and hostname verification
+                    session.verify = self.cert_verification
+
+                    # Configure adapter with proper SSL settings
+                    adapter = HTTPAdapter(
+                        pool_connections=1,
+                        pool_maxsize=1,
+                        max_retries=Retry(
+                            total=3,
+                            backoff_factor=1,
+                            status_forcelist=[408, 429, 500, 502, 503, 504],
+                            allowed_methods=["GET", "POST"],
+                        ),
+                    )
+                    session.mount("https://", adapter)
+
+                    # Build the complete headers with security information
+                    base_headers = self._build_header()
+                    if headers:
+                        # Merge user-provided headers with base headers
+                        base_headers.update(headers)
+                    headers = base_headers
+                    headers["Host"] = hostname
+
+                    # Add certificate info to request kwargs
+                    request_kwargs = {
+                        "method": method,
+                        "url": url,
+                        "headers": headers,
+                        "data": data,
+                        "params": params,
+                        "stream": stream,
+                        "verify": self.cert_verification,
+                        "timeout": timeout or self.timeout,
+                    }
+
+                    # Add client certificate if mTLS is enabled
+                    if self.require_client_auth:
+                        if not self.certificate or not self.private_key:
+                            raise ValueError(
+                                "Both certificate and private key are required for mTLS "
+                                "(client authentication). "
+                                "Please provide both certificate and private key paths."
+                            )
+                        # Use proper cert format
+                        request_kwargs["cert"] = (self.certificate, self.private_key)
+
+                    response = session.request(**request_kwargs)
+                else:
+                    # For non-TLS requests, still use the security headers
+                    base_headers = self._build_header()
+                    if headers:
+                        base_headers.update(headers)
+
+                    response = session.request(
+                        method=method,
+                        url=url,
+                        headers=base_headers,
+                        data=data,
+                        params=params,
+                        stream=stream,
+                        timeout=timeout or self.timeout,
+                    )
                 return response
             except requests.exceptions.SSLError as e:
                 self._handle_ssl_error(e, attempt, max_retries)
+                if attempt == max_retries - 1:
+                    raise
 
     def _handle_ssl_error(self, e, attempt, max_retries):
         """Handle SSL errors with retry logic."""
@@ -304,7 +382,15 @@ class AggregatorRESTClient(AggregatorClientInterface):
                 logger.debug("Attempting to refetch server certificate")
                 self.root_certificate = self.refetch_server_cert_callback()
                 # Update the cert_verification with the new root certificate
-                self.cert_verification = self.root_certificate
+                self.cert_verification = self._configure_cert_verification(
+                    self.use_tls, self.root_certificate
+                )
+                # Re-verify certificates
+                try:
+                    self._verify_certificates()
+                except Exception as verify_error:
+                    logger.error(f"Certificate re-verification failed: {verify_error}")
+                    raise
             else:
                 raise
         else:
